@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "*.embeddedhtml": "html",
+        "stdexcept": "cpp",
+        "string": "cpp",
+        "ios": "cpp",
+        "charconv": "cpp"
+    },
+    "C_Cpp.errorSquiggles": "disabled"
+}
