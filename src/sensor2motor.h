@@ -1,9 +1,6 @@
 #include <stdint.h>
 #include <stdlib.h>  // abs関数のために追加
 
-// モータアクセル値の配列
-uint32_t motor_accel_values[256];
-
 // 値を0と255の間に制限する関数
 int clip_value(int value) {
     if (value < -255) {
@@ -30,8 +27,8 @@ float get_average_line_position(uint8_t sensor_value, int8_t* sensor_weight){
     if(length == 0){
         return 0;
     }else{
-       return sum / length;
-    //    return sum;
+       return (float)sum / (float)length;
+      // return sum;
     }
 }
 
@@ -46,9 +43,9 @@ void init_pid() {
 	last_error = 0.0;
 }
 
-uint32_t control_motors(uint8_t sensor_value, int8_t* sensor_weight, float speed, float Kp, float Ki, float Kd, float deltaT) {
+uint32_t control_motors(uint8_t sensor_value,  int8_t* sensor_weight, float speed, float Kp, float Ki, float Kd, float deltaT) {
 
-    float position = get_average_line_position(sensor_value, sensor_weight);
+  float position = get_average_line_position(sensor_value, sensor_weight);
     
 	error[0]  = error[1];
 	error[1]  = -position;
@@ -56,27 +53,29 @@ uint32_t control_motors(uint8_t sensor_value, int8_t* sensor_weight, float speed
 
 	float p = Kp * error[1];
 	float i = Ki * integral;
-    float d = (error[1] - error[0]) / deltaT;
+  float d = (error[1] - error[0]) / deltaT;
 
-    // PID制御の計算
-    float correction = p + i + d;
+  // PID制御の計算
+  float correction = p + i + d;
 
-    // モーター速度の設定
-    // int motor_speed_left  = clip_value((int)(MAX_SPEED * (speed + correction)));
-    // int motor_speed_right = clip_value((int)(MAX_SPEED * (speed - correction)));
+  // モーター速度の設定
+  // int motor_speed_left  = clip_value((int)(MAX_SPEED * (speed + correction)));
+  // int motor_speed_right = clip_value((int)(MAX_SPEED * (speed - correction)));
 
-    int motor_speed_left  = 0;
-    int motor_speed_right = 0;
+  int motor_speed_left  = 0;
+  int motor_speed_right = 0;
 
-	if (correction >= 0){
-    	motor_speed_left  = clip_value((int)(MAX_SPEED * (speed)));
-    	motor_speed_right = clip_value((int)(MAX_SPEED * (speed - correction)));
-	} else {
-    	motor_speed_right = clip_value((int)(MAX_SPEED * (speed)));
-    	motor_speed_left  = clip_value((int)(MAX_SPEED * (speed + correction)));
-	}
-	
-	uint8_t leftMotorAccelForward   = (motor_speed_left <= 0) ? 0 : motor_speed_left;
+  if (correction >= 0){
+      motor_speed_left  = clip_value((int)(MAX_SPEED * (speed)));
+      motor_speed_right = clip_value((int)(MAX_SPEED * (speed - correction)));
+      // motor_speed_right = clip_value((int)(MAX_SPEED * speed - correction));
+  } else {
+      motor_speed_left  = clip_value((int)(MAX_SPEED * (speed + correction)));
+      // motor_speed_left  = clip_value((int)(MAX_SPEED * speed + correction));
+      motor_speed_right = clip_value((int)(MAX_SPEED * (speed)));
+  }
+    
+    uint8_t leftMotorAccelForward   = (motor_speed_left <= 0) ? 0 : motor_speed_left;
     uint8_t leftMotorAccelBackward  = (motor_speed_left >  0) ? 0 : -motor_speed_left;
     uint8_t rightMotorAccelForward  = (motor_speed_right <= 0) ? 0 : motor_speed_right;
     uint8_t rightMotorAccelBackward = (motor_speed_right >  0) ? 0 : -motor_speed_right;

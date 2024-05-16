@@ -79,7 +79,7 @@ float speed = 0.5;
 float Kp = 0.045;
 float Ki = 0;
 float Kd = 0;
-int   sensorWeight[8] = {0, 0, 0, 0, 0 ,0, 0, 0};
+int8_t sensorWeight[8] = {0, 0, 0, 0, 0 ,0, 0, 0};
 
 char sensor, sensor_prev;
 
@@ -156,7 +156,7 @@ void setup() {
   // dma_channel_configure(dma_chan_0, &dma_c_0, &sensorReg, &pio_1->rxf[pio_1_sm_0], 1, true);
   // dma_channel_configure(dma_chan_1, &dma_c_1, &sensorReg, &pio_1->rxf[pio_1_sm_0], 1, true);
 
-  sleep_ms(1000);
+  sleep_ms(2000);
 
   // Serial
   Serial.begin(115200);
@@ -183,14 +183,11 @@ void loop() {
 
     sensor = gpio_get(SENSOR_PIN_0) << 7 |  gpio_get(SENSOR_PIN_1) << 6 | gpio_get(SENSOR_PIN_2) << 5 | gpio_get(SENSOR_PIN_3) << 4 | gpio_get(SENSOR_PIN_4) << 3 | gpio_get(SENSOR_PIN_5) << 2 | gpio_get(SENSOR_PIN_6) << 1 | gpio_get(SENSOR_PIN_7) << 0;
 
-    Serial.println(sensor, HEX);
-
-
     if (sensor == 0){
       sensor = sensor_prev;
     }
 
-    uint32_t accel = control_motors(sensor, &sensorWeight, speed, Kp, Ki, Kd, deltaT);
+    uint32_t accel = control_motors(sensor, sensorWeight, speed, Kp, Ki, Kd, deltaT);
 
     // Serial.println(accel, HEX);
     
