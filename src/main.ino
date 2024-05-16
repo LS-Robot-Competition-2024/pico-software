@@ -11,10 +11,6 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#ifndef PICO_DEFAULT_LED_PIN
-#error pio/pwm example requires a board with a regular LED
-#endif
-
 #define MOTOR_PIN_0 12
 #define MOTOR_PIN_1 13
 #define MOTOR_PIN_2 14
