@@ -5,7 +5,7 @@
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 #include "pwm.pio.h"
-#include "sensor2motor.h"
+#include "pid.h"
 #include "sensor.pio.h"
 #include <string.h>
 #include <stdint.h>
