@@ -11,6 +11,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+/////////////////////////////////////////////////////////////////////
+// Constants
+/////////////////////////////////////////////////////////////////////
+
 #define MOTOR_PIN_0 12
 #define MOTOR_PIN_1 13
 #define MOTOR_PIN_2 14
@@ -32,6 +36,15 @@ const IPAddress ip(192, 168, 40, 1);
 const IPAddress subnet(255, 255, 255, 0);
 
 WebSocketsServer webSocket = WebSocketsServer(8081);
+
+PIO pio_0 = pio0;
+PIO pio_1 = pio1;
+
+int pio_0_sm_0 = 0;
+int pio_0_sm_1 = 1;
+int pio_0_sm_2 = 2;
+int pio_0_sm_3 = 3;
+int pio_1_sm_0 = 1;
 
 /////////////////////////////////////////////////////////////////////
 // Function prototypes
@@ -59,16 +72,14 @@ unsigned int readLatestDataFromFifo(PIO pio, uint sm) {
   return latestData;
 }
 
-PIO pio_0 = pio0;
-PIO pio_1 = pio1;
+/////////////////////////////////////////////////////////////////////
+// Global variables
+/////////////////////////////////////////////////////////////////////
 
 uint pio_0_offset;
 uint pio_1_offset;
-int pio_0_sm_0 = 0;
-int pio_0_sm_1 = 1;
-int pio_0_sm_2 = 2;
-int pio_0_sm_3 = 3;
-int pio_1_sm_0 = 1;
+int dma_chan_0;
+int dma_chan_1;
 
 static unsigned int leftMotorAccelForward   = 0;
 static unsigned int leftMotorAccelBackward  = 0;
@@ -85,12 +96,11 @@ char sensor, sensor_prev;
 
 bool active = false;
 
-int dma_chan_0;
-int dma_chan_1;
+unsigned long lastTime = 0;
 
 void setup() {
 
-  // GPIOピンを初期化
+  // Initialize GPIO
   gpio_init(SENSOR_PIN_0);
   gpio_init(SENSOR_PIN_1);
   gpio_init(SENSOR_PIN_2);
@@ -158,10 +168,9 @@ void setup() {
 
   sleep_ms(2000);
 
-  // Serial
   Serial.begin(115200);
 
-  // websocket
+  // WiFi
   WiFi.mode(WIFI_AP);
   WiFi.softAP(ssid, password);
 
@@ -173,11 +182,13 @@ void setup() {
 
   Serial.println("WebSocket server started.");
 }
-unsigned long lastTime = 0;
+
+/////////////////////////////////////////////////////////////////////
+// loop : Main loop
+/////////////////////////////////////////////////////////////////////
 
 void loop() {
   if (active){
-    
     unsigned long currentTime = millis();
     float deltaT = (currentTime - lastTime) / 1000.0;
 
@@ -189,8 +200,6 @@ void loop() {
 
     uint32_t accel = control_motors(sensor, sensorWeight, speed, Kp, Ki, Kd, deltaT);
 
-    // Serial.println(accel, HEX);
-    
     leftMotorAccelForward   = (accel >> 24) & 0xFF; 
     leftMotorAccelBackward  = (accel >> 16) & 0xFF;
     rightMotorAccelForward  = (accel >> 8)  & 0xFF;
@@ -206,10 +215,13 @@ void loop() {
   }
 }
 
+/////////////////////////////////////////////////////////////////////
+// loop1 : WebSocket loop
+/////////////////////////////////////////////////////////////////////
+
 void loop1() {
   webSocket.loop();
 }
-
 
 /////////////////////////////////////////////////////////////////////
 // decodeAccel
@@ -228,8 +240,8 @@ void decodeAccel(String accel_string) {
 }
 
 void extractAndConvertFloatSpeed(String text) {
-    int startIndex = text.indexOf("Speed:") + 6;  // "PID:kp:" の次の文字から開始
-    int endIndex = text.indexOf(';', startIndex);  // ";" が出現する位置を検索
+    int startIndex = text.indexOf("Speed:") + 6;
+    int endIndex = text.indexOf(';', startIndex);
 
     if (startIndex > 0 && endIndex > startIndex) {
         String numberStr = text.substring(startIndex, endIndex);
@@ -240,8 +252,8 @@ void extractAndConvertFloatSpeed(String text) {
 }
 
 void extractAndConvertFloatKp(String text) {
-    int startIndex = text.indexOf("PID:kp:") + 7;  // "PID:kp:" の次の文字から開始
-    int endIndex = text.indexOf(';', startIndex);  // ";" が出現する位置を検索
+    int startIndex = text.indexOf("PID:kp:") + 7;
+    int endIndex = text.indexOf(';', startIndex);
 
     if (startIndex > 0 && endIndex > startIndex) {
         String numberStr = text.substring(startIndex, endIndex);
@@ -252,8 +264,8 @@ void extractAndConvertFloatKp(String text) {
 }
 
 void extractAndConvertFloatKi(String text) {
-    int startIndex = text.indexOf("PID:ki:") + 7;  // "PID:kp:" の次の文字から開始
-    int endIndex = text.indexOf(';', startIndex);  // ";" が出現する位置を検索
+    int startIndex = text.indexOf("PID:ki:") + 7;
+    int endIndex = text.indexOf(';', startIndex);
 
     if (startIndex > 0 && endIndex > startIndex) {
         String numberStr = text.substring(startIndex, endIndex);
@@ -263,8 +275,8 @@ void extractAndConvertFloatKi(String text) {
     }
 }
 void extractAndConvertFloatKd(String text) {
-    int startIndex = text.indexOf("PID:kd:") + 7;  // "PID:kp:" の次の文字から開始
-    int endIndex = text.indexOf(';', startIndex);  // ";" が出現する位置を検索
+    int startIndex = text.indexOf("PID:kd:") + 7;
+    int endIndex = text.indexOf(';', startIndex);
 
     if (startIndex > 0 && endIndex > startIndex) {
         String numberStr = text.substring(startIndex, endIndex);
@@ -275,11 +287,11 @@ void extractAndConvertFloatKd(String text) {
 }
 
 void extractAndConvertSensor(String text) {
-    int startIndex   = text.indexOf("Sensor:sensor") + 13;  // "PID:kp:" の次の文字から開始
+    int startIndex   = text.indexOf("Sensor:sensor") + 13;
     String numberStr = text.substring(startIndex, startIndex + 1);
     int sensorIndex  = numberStr.toInt();
     startIndex       = startIndex + 2;
-    int endIndex     = text.indexOf(';', startIndex);         // ";" が出現する位置を検索
+    int endIndex     = text.indexOf(';', startIndex);
 
     if (startIndex > 0 && endIndex > startIndex) {
         numberStr = text.substring(startIndex, endIndex);
