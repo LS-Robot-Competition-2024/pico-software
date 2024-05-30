@@ -4,23 +4,26 @@
 #define TUNING_ADDRESS_1 28
 #define TUNING_ADDRESS_2 56
 
+float max_angle;
+int k_speed = 50;
+
 float err;
 float prev_err;
-bool cross;
 
-int cross_count;
+int black_steps;
 int blind_steps;
 int loop_count;
 
 unsigned long start;
-unsigned long prev_time;
 const unsigned long delay_time = 1;
 
 float pt, it, dt;
 
-int true_pos;
-
 float angle_patterns[256];
+float score_weights[] = {1, 2, 3, 4, 4, 3, 2, 1};
+float score_patterns[256];
+
+int last_edge;
 
 void setup() {
     io_init();
@@ -33,11 +36,11 @@ void loop() {
 }
 
 void init_val() {
-    err = prev_err = cross = cross_count = blind_steps = loop_count = 0;
+    err = prev_err = black_steps = blind_steps = loop_count = 0;
     start = millis();
-    prev_time = 0;
     pt = it = dt = 0;
-    true_pos = 0;
+    score = 0;
+    last_edge = 0;
 }
 
 void print_test_mode() {
@@ -48,6 +51,7 @@ void print_test_mode() {
     SerialBT.println("init tune_params: 4");
     SerialBT.println("print all_params: 5");
     SerialBT.println("check senser: 6");
+    SerialBT.println("set speed: 7");
 }
 
 void choose_mode() {
@@ -74,6 +78,9 @@ void choose_mode() {
                     break;
                 case '6':
                     check_line_senser();
+                    break;
+                case '7':
+                    set_speed();
                     break;
             }
             print_test_mode();
@@ -136,14 +143,17 @@ void run_line_trace() {
     read_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
 
     precompute_angle();
+    precompute_score();
     init_val();
     while (1) {
         if (run) {
             loop_count++;
             if (!pid_control()) {
                 run = false;
-                score = (float)(millis() - start) / 1000.;
+                score = score / 1000 * k_speed;
                 SerialBT.printf("loop count: %d\n", loop_count);
+                SerialBT.printf("blind steps: %d\n", blind_steps);
+                SerialBT.printf("black_steps: %d\n", black_steps);
                 write_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
             }
         } else {
@@ -162,24 +172,25 @@ void tune_line_trace() {
     read_params(best_kp, best_ki, best_kd, best_kr, best_ky, best_score, MAIN_ADDRESS);
 
     float score_diff = score - score2;
-    update_param(kp, kp2, score_diff, 50, 150);
-    update_param(ki, ki2, err, 0, 50);
-    update_param(kd, kd2, err, 0, 50);
-    update_param(kr, kr2, err, 0.5, 1);
-    update_param(ky, ky2, err, 5, 20);
+    update_param(kp, kp2, score_diff, 60, 120);
+    update_param(ki, ki2, err, 0, 2);
+    update_param(kd, kd2, err, 0, 10);
+    update_param(kr, kr2, err, 0.5, 0.9);
+    update_param(ky, ky2, err, 10, 15);
     score2 = score;
 
     precompute_angle();
+    precompute_score();
     init_val();
     while (1) {
         if (run) {
             if (!pid_control()) {
                 run = false;
-                score = (float)(millis() - start) / 1000.;
+                score = score / 1000 * k_speed;
                 write_params(kp, ki, kd, kr, ky, score, TUNING_ADDRESS_1);
                 write_params(kp2, ki2, kd2, kr2, ky2, score2, TUNING_ADDRESS_2);
                 if (best_score < score) {
-                    write_params(best_kp, best_ki, best_kd, best_kr, best_ky, best_score, MAIN_ADDRESS);
+                    write_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
                 }
             }
         } else {
@@ -191,7 +202,7 @@ void tune_line_trace() {
 
 float read_senser() {
     int x = 0;
-    int for (int i = 0; i < 8; i++) {
+    for (int i = 0; i < 8; i++) {
         if (gpio_get(senser_pins[i])) {
             x |= (1 << (7 - i));
         }
@@ -200,31 +211,35 @@ float read_senser() {
     if (x) {
         blind_steps = 0;
         if (x == 0xff) {
-            cross = true;
-        } else if (cross) {
-            cross = false;
-            cross_count++;
+            black_steps++;
         }
+        if ((x & 0x1) && !(x & 0x80)) {
+            last_edge = 1;
+        } else if (!(x & 0x1) && (x & 0x80)) {
+            last_edge = -1;
+        }
+
     } else {
         blind_steps++;
-        cross = false;
+        if (0 < last_edge) {
+            return max_angle;
+        } else if (last_edge < 0) {
+            return -max_angle;
+        }
     }
+    score += score_patterns[x];
     return angle_patterns[x];
 }
 
 bool pid_control() {
     unsigned long cur_time = millis();
-    if (cur_time - prev_time < delay_time) {
-        return 1;
+    delay(delay_time);
+    if (cur_time - start >= 10000) {
+        return 0;
     }
+
     err = read_senser();
-    if (err == 0) {
-        if (prev_err > 0) {
-            err = max_angle;
-        } else if (prev_err < 0) {
-            err = -max_angle;
-        }
-    }
+
     pt = err;
     it = it * kr + err;
     dt = err - prev_err;
@@ -233,7 +248,8 @@ bool pid_control() {
 
     move_motors(k_speed + speed, k_speed - speed);
     prev_err = err;
-    return (cross_count < 3 && blind_steps < 1000);
+
+    return (blind_steps < (1000. / delay_time) && black_steps < (1000. / delay_time));
 }
 
 void move_motors(int l_speed, int r_speed) {
@@ -272,30 +288,10 @@ void update_param(float& p, float& pre_p, float err_, float min_, float max_) {
 
 void precompute_angle() {
     for (int i = 0; i < 256; i++) {
-        angle_patterns[i] = 0;
-        int size = count_bits(i);
-        float val = calc_bit_weights(i);
-        switch (size) {
-            case 0:
-                break;
-            case 1:
-            case 2:
-            case 3:
-                angle_patterns[i] = atan(val / size / ky);
-                break;
-            case 4:
-            case 5:
-            case 6:
-            case 7:
-            case 8:
-                if (val > 0) {
-                    angle_patterns[i] = max_angle;
-                } else if (val < 0) {
-                    angle_patterns[i] = -max_angle;
-                }
-                break;
-        }
+        float pos = convert_bit(i);
+        angle_patterns[i] = atan(pos / ky);
     }
+    max_angle = atan(12. / ky);
 }
 
 void check_line_senser() {
@@ -318,5 +314,37 @@ void check_line_senser() {
             v = "0" + v;
         }
         SerialBT.println(v);
+    }
+}
+void set_speed() {
+    SerialBT.println(k_speed);
+    while (1) {
+        if (SerialBT.available()) {
+            String tmp = read_string_BT();
+            SerialBT.println(tmp);
+            if (is_number(tmp)) {
+                float f = tmp.toFloat();
+                if (0 < f && f < 200) {
+                    k_speed = f;
+                }
+            }
+            break;
+        }
+    }
+    SerialBT.println(k_speed);
+}
+void precompute_score() {
+    for (int i = 0; i < 256; i++) {
+        float sum = 0;
+        int size = 0;
+        for (int j = 0; j < 8; j++) {
+            if (i & (1 << (7 - j))) {
+                sum += score_weights[j];
+                size++;
+            }
+        }
+        if (size == 1 || size == 2) {
+            score_patterns[i] = sum / size;
+        }
     }
 }

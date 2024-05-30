@@ -22,8 +22,6 @@
 
 #define ANALOG_SEED_PIN 27
 
-const float max_angle = M_PI / 3.;
-const int k_speed = 100;
 const int motor_pins[] = {MOTOR_PIN_0, MOTOR_PIN_1, MOTOR_PIN_2, MOTOR_PIN_3};  // lf lb rf rb
 const int senser_pins[] = {SENSOR_PIN_0, SENSOR_PIN_1, SENSOR_PIN_2, SENSOR_PIN_3,
                            SENSOR_PIN_4, SENSOR_PIN_5, SENSOR_PIN_6, SENSOR_PIN_7};
@@ -46,11 +44,6 @@ void io_init() {
         pwm_set_wrap(slice_num, 255);
         pwm_set_enabled(slice_num, true);
     }
-    /*
-    for (int i = 0; i < 4; i++) {
-        pinMode(motor_pins[i], OUTPUT);
-    }
-    */
 }
 
 unsigned long generate_seed() {
@@ -167,6 +160,39 @@ float calc_bit_weights(int x) {
         }
     }
     return sum;
+}
+float convert_bit(int x) {
+    int x2 = x & (x >> 1);
+    int le = x & ~(x >> 1);
+    int ri = x & ~(x << 1);
+
+    float lv, rv, v;
+    lv = calc_bit_weights(le);
+    rv = calc_bit_weights(ri);
+    v = calc_bit_weights(x);
+
+    int ls, rs, s;
+    s = count_bits(x);
+    ls = count_bits(le);
+    rs = count_bits(ri);
+    if (s == 0) {
+        ls = 1;
+        rs = 1;
+        s = 1;
+    }
+    lv /= ls;
+    rv /= rs;
+    if (s == 2 && x2) {
+        return v / s;
+    } else if (lv == rv) {
+        return lv;
+    } else if (abs(lv) == abs(rv)) {
+        return 0;
+    } else if (abs(lv) > abs(rv)) {
+        return lv;
+    } else {
+        return rv;
+    }
 }
 bool is_number(String str) {
     if (str.length() == 0) {
