@@ -3,17 +3,17 @@
 #define MAIN_ADDRESS 0
 #define TUNING_ADDRESS_1 28
 #define TUNING_ADDRESS_2 56
+#define SPEED_ADDRESS 84
+#define TIME_ADDRESS 88
 
 float max_angle;
-int k_speed = 50;
+int k_speed;
+int limit_time;
 
 float err;
 float prev_err;
 
-int black_steps;
-int blind_steps;
-int loop_count;
-
+int non_line_period;
 unsigned long start;
 const unsigned long delay_time = 1;
 
@@ -24,6 +24,7 @@ float score_weights[] = {1, 2, 3, 4, 4, 3, 2, 1};
 float score_patterns[256];
 
 int last_edge;
+float param_range[5][2] = {{60., 120.}, {0., 2.}, {0., 40.}, {0.5, 0.9}, {5., 13.}};  // p i d r y
 
 void setup() {
     io_init();
@@ -36,7 +37,7 @@ void loop() {
 }
 
 void init_val() {
-    err = prev_err = black_steps = blind_steps = loop_count = 0;
+    err = prev_err = non_line_period = 0;
     start = millis();
     pt = it = dt = 0;
     score = 0;
@@ -52,6 +53,8 @@ void print_test_mode() {
     SerialBT.println("print all_params: 5");
     SerialBT.println("check senser: 6");
     SerialBT.println("set speed: 7");
+    SerialBT.println("set limit time: 8");
+    SerialBT.println("check motor: 9");
 }
 
 void choose_mode() {
@@ -82,6 +85,12 @@ void choose_mode() {
                 case '7':
                     set_speed();
                     break;
+                case '8':
+                    set_limit_time();
+                    break;
+                case '9':
+                    check_motor();
+                    break;
             }
             print_test_mode();
         }
@@ -91,38 +100,44 @@ void choose_mode() {
 
 void set_main_params() {
     read_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
+    print_params(kp, ki, kd, kr, ky, score);
 
-    String param_name[] = {"kp", "ki", "kd", "kr", "ky", "score"};
-    float param_val[] = {kp, ki, kd, kr, ky, score};
-
-    for (int i = 0; i < 6; i++) {
+    String param_name[] = {"kp", "ki", "kd", "kr", "ky"};
+    float param_val[] = {kp, ki, kd, kr, ky};
+    for (int i = 0; i < 5; i++) {
         SerialBT.println(param_name[i] + "?");
         while (1) {
             if (SerialBT.available()) {
                 String tmp = read_string_BT();
-                SerialBT.println(tmp);
                 if (is_number(tmp)) {
                     param_val[i] = tmp.toFloat();
                 }
+                param_val[i] = constrain16(param_val[i], param_range[i][0], param_range[i][1]);
                 SerialBT.println(param_val[i]);
                 break;
             }
         }
     }
-    write_params(param_val[0], param_val[1], param_val[2], param_val[3], param_val[4], param_val[5], MAIN_ADDRESS);
+    write_params(param_val[0], param_val[1], param_val[2], param_val[3], param_val[4], 0., MAIN_ADDRESS);
+    print_params(param_val[0], param_val[1], param_val[2], param_val[3], param_val[4], 0.);
 }
 
 void init_tune_params() {
+    SerialBT.println("read");
     SerialBT.println("main");
     read_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
+    print_params(kp, ki, kd, kr, ky, score);
 
     float kp2, ki2, kd2, kr2, ky2, score2;
     SerialBT.println("tuning1");
     read_params(kp2, ki2, kd2, kr2, ky2, score2, TUNING_ADDRESS_1);
+    print_params(kp2, ki2, kd2, kr2, ky2, score2);
 
     SerialBT.println("tuning2");
     read_params(kp2, ki2, kd2, kr2, ky2, score2, TUNING_ADDRESS_2);
+    print_params(kp2, ki2, kd2, kr2, ky2, score2);
 
+    SerialBT.println("write");
     write_params(kp, ki, kd, kr, ky, score, TUNING_ADDRESS_1);
     write_params(kp, ki, kd, kr, ky, score, TUNING_ADDRESS_2);
 }
@@ -130,31 +145,34 @@ void init_tune_params() {
 void print_all_params() {
     SerialBT.println("main");
     read_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
-
+    print_params(kp, ki, kd, kr, ky, score);
     SerialBT.println("tuning1");
     read_params(kp, ki, kd, kr, ky, score, TUNING_ADDRESS_1);
-
+    print_params(kp, ki, kd, kr, ky, score);
     SerialBT.println("tuning2");
     read_params(kp, ki, kd, kr, ky, score, TUNING_ADDRESS_2);
+    print_params(kp, ki, kd, kr, ky, score);
 }
 
 void run_line_trace() {
+    limit_time = get_int(TIME_ADDRESS);
+    k_speed = get_int(SPEED_ADDRESS);
+
     bool run = true;
     read_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
+    print_params(kp, ki, kd, kr, ky, score);
 
     precompute_angle();
     precompute_score();
     init_val();
     while (1) {
         if (run) {
-            loop_count++;
             if (!pid_control()) {
                 run = false;
                 score = score / 1000 * k_speed;
-                SerialBT.printf("loop count: %d\n", loop_count);
-                SerialBT.printf("blind steps: %d\n", blind_steps);
-                SerialBT.printf("black_steps: %d\n", black_steps);
+                SerialBT.printf("time: %.1f\n", (millis() - start) / 1000);
                 write_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
+                print_params(kp, ki, kd, kr, ky, score);
             }
         } else {
             move_motors(0, 0);
@@ -164,6 +182,9 @@ void run_line_trace() {
 }
 
 void tune_line_trace() {
+    limit_time = get_int(TIME_ADDRESS);
+    k_speed = get_int(SPEED_ADDRESS);
+
     bool run = true;
     read_params(kp, ki, kd, kr, ky, score, TUNING_ADDRESS_1);
     float kp2, ki2, kd2, kr2, ky2, score2;
@@ -172,11 +193,11 @@ void tune_line_trace() {
     read_params(best_kp, best_ki, best_kd, best_kr, best_ky, best_score, MAIN_ADDRESS);
 
     float score_diff = score - score2;
-    update_param(kp, kp2, score_diff, 60, 120);
-    update_param(ki, ki2, err, 0, 2);
-    update_param(kd, kd2, err, 0, 10);
-    update_param(kr, kr2, err, 0.5, 0.9);
-    update_param(ky, ky2, err, 10, 15);
+    update_param(kp, kp2, score_diff, param_range[0][0], param_range[0][1]);
+    update_param(ki, ki2, score_diff, param_range[1][0], param_range[1][1]);
+    update_param(kd, kd2, score_diff, param_range[2][0], param_range[2][1]);
+    update_param(kr, kr2, score_diff, param_range[3][0], param_range[3][1]);
+    update_param(ky, ky2, score_diff, param_range[4][0], param_range[4][1]);
     score2 = score;
 
     precompute_angle();
@@ -188,8 +209,13 @@ void tune_line_trace() {
                 run = false;
                 score = score / 1000 * k_speed;
                 write_params(kp, ki, kd, kr, ky, score, TUNING_ADDRESS_1);
+                SerialBT.println("current");
+                print_params(kp, ki, kd, kr, ky, score);
                 write_params(kp2, ki2, kd2, kr2, ky2, score2, TUNING_ADDRESS_2);
+                SerialBT.println("previous");
+                print_params(kp2, ki2, kd2, kr2, ky2, score2);
                 if (best_score < score) {
+                    SerialBT.println("update!!");
                     write_params(kp, ki, kd, kr, ky, score, MAIN_ADDRESS);
                 }
             }
@@ -199,7 +225,6 @@ void tune_line_trace() {
         }
     }
 }
-
 float read_senser() {
     int x = 0;
     for (int i = 0; i < 8; i++) {
@@ -209,37 +234,34 @@ float read_senser() {
     }
 
     if (x) {
-        blind_steps = 0;
-        if (x == 0xff) {
-            black_steps++;
-        }
         if ((x & 0x1) && !(x & 0x80)) {
             last_edge = 1;
         } else if (!(x & 0x1) && (x & 0x80)) {
             last_edge = -1;
         }
-
     } else {
-        blind_steps++;
         if (0 < last_edge) {
             return max_angle;
         } else if (last_edge < 0) {
             return -max_angle;
         }
     }
-    score += score_patterns[x];
+    if (score_patterns[x]) {
+        score += score_patterns[x];
+        non_line_period = 0;
+    } else {
+        non_line_period++;
+    }
     return angle_patterns[x];
 }
-
 bool pid_control() {
     unsigned long cur_time = millis();
     delay(delay_time);
-    if (cur_time - start >= 10000) {
+    if (cur_time - start >= limit_time) {
         return 0;
     }
 
     err = read_senser();
-
     pt = err;
     it = it * kr + err;
     dt = err - prev_err;
@@ -248,13 +270,12 @@ bool pid_control() {
 
     move_motors(k_speed + speed, k_speed - speed);
     prev_err = err;
-
-    return (blind_steps < (1000. / delay_time) && black_steps < (1000. / delay_time));
+    return non_line_period < (2000. / delay_time);
 }
 
 void move_motors(int l_speed, int r_speed) {
-    l_speed = constrain(l_speed, -255, 255);
-    r_speed = constrain(r_speed, -255, 255);
+    l_speed = constrain16(l_speed, -255, 255);
+    r_speed = constrain16(r_speed, -255, 255);
 
     if (l_speed >= 0) {
         pwm_set_gpio_level(MOTOR_PIN_0, l_speed);
@@ -283,7 +304,7 @@ void update_param(float& p, float& pre_p, float err_, float min_, float max_) {
         cp = p - abs((p - pre_p) / 2.);
     }
     pre_p = p;
-    p = constrain(cp + noise, min_, max_);
+    p = constrain16(cp + noise, min_, max_);
 }
 
 void precompute_angle() {
@@ -317,21 +338,36 @@ void check_line_senser() {
     }
 }
 void set_speed() {
+    k_speed = get_int(SPEED_ADDRESS);
     SerialBT.println(k_speed);
     while (1) {
         if (SerialBT.available()) {
             String tmp = read_string_BT();
-            SerialBT.println(tmp);
             if (is_number(tmp)) {
-                float f = tmp.toFloat();
-                if (0 < f && f < 200) {
-                    k_speed = f;
-                }
+                k_speed = tmp.toInt();
             }
+            k_speed = constrain16(k_speed, 50, 200);
+            put_int(SPEED_ADDRESS, k_speed);
             break;
         }
     }
     SerialBT.println(k_speed);
+}
+void set_limit_time() {
+    limit_time = get_int(TIME_ADDRESS);
+    SerialBT.println(limit_time);
+    while (1) {
+        if (SerialBT.available()) {
+            String tmp = read_string_BT();
+            if (is_number(tmp)) {
+                limit_time = tmp.toInt();
+            }
+            limit_time = constrain16(limit_time, 10 * 1000, 60 * 1000);
+            put_int(TIME_ADDRESS, limit_time);
+            break;
+        }
+    }
+    SerialBT.println(limit_time);
 }
 void precompute_score() {
     for (int i = 0; i < 256; i++) {
@@ -347,4 +383,17 @@ void precompute_score() {
             score_patterns[i] = sum / size;
         }
     }
+}
+void check_motor() {
+    move_motors(100, 100);
+    delay(2000);
+    move_motors(0, 0);
+    delay(2000);
+    move_motors(50, -50);
+    delay(2000);
+    move_motors(0, 0);
+    delay(2000);
+    move_motors(-50, 50);
+    delay(2000);
+    move_motors(0, 0);
 }

@@ -100,7 +100,6 @@ void put_float(int addr, float val) {
     }
     EEPROM.commit();
 }
-
 float get_float(int addr) {
     union {
         float val;
@@ -109,7 +108,27 @@ float get_float(int addr) {
     for (int i = 0; i < 4; i++) {
         data.bytes[i] = EEPROM.read(addr + i);
     }
+    return data.val;
+}
+void put_int(int addr, int val) {
+    union {
+        int val;
+        byte bytes[4];
+    } data;
+    data.val = val;
+    for (int i = 0; i < 4; i++) {
+        EEPROM.write(addr + i, data.bytes[i]);
+    }
     EEPROM.commit();
+}
+float get_int(int addr) {
+    union {
+        int val;
+        byte bytes[4];
+    } data;
+    for (int i = 0; i < 4; i++) {
+        data.bytes[i] = EEPROM.read(addr + i);
+    }
     return data.val;
 }
 void clear_eeprom() {
@@ -133,7 +152,7 @@ void read_params(float& kp_, float& ki_, float& kd_, float& kr_, float& ky_, flo
     kr_ = get_float(offset + 4 * 3);
     ky_ = get_float(offset + 4 * 4);
     score_ = get_float(offset + 4 * 5);
-    print_params(kp_, ki_, kd_, kr_, ky_, score_);
+    // print_params(kp_, ki_, kd_, kr_, ky_, score_);
 }
 void write_params(float kp_, float ki_, float kd_, float kr_, float ky_, float score_, int offset) {
     put_float(offset, kp_);
@@ -142,7 +161,7 @@ void write_params(float kp_, float ki_, float kd_, float kr_, float ky_, float s
     put_float(offset + 4 * 3, kr_);
     put_float(offset + 4 * 4, ky_);
     put_float(offset + 4 * 5, score_);
-    print_params(kp_, ki_, kd_, kr_, ky_, score_);
+    // print_params(kp_, ki_, kd_, kr_, ky_, score_);
 }
 int count_bits(int x) {
     int cnt = 0;
@@ -211,5 +230,14 @@ bool is_number(String str) {
         }
     }
     return true;
+}
+float constrain16(float x, float low, float high) {
+    if (x < low) {
+        return low;
+    } else if (x > high) {
+        return high;
+    } else {
+        return x;
+    }
 }
 #endif
