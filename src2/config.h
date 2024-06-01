@@ -55,7 +55,7 @@ unsigned long generate_seed() {
 }
 
 float uniform_random(float x) {
-    int rate = random(0, 1000);
+    int rate = random(1001);
     float ret = (float)rate / 1000. * (x);
     return ret;
 }

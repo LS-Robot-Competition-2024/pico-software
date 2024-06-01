@@ -24,7 +24,7 @@ float score_weights[] = {1, 2, 3, 4, 4, 3, 2, 1};
 float score_patterns[256];
 
 int last_edge;
-float param_range[5][2] = {{60., 120.}, {0., 2.}, {0., 40.}, {0.5, 0.9}, {5., 13.}};  // p i d r y
+float param_range[5][2] = {{90., 170.}, {0., 3.}, {0., 50.}, {0.3, 0.96}, {8., 25}};  // p i d r y
 
 void setup() {
     io_init();
@@ -295,6 +295,9 @@ void move_motors(int l_speed, int r_speed) {
 
 void update_param(float& p, float& pre_p, float err_, float min_, float max_) {
     float noise = uniform_random((max_ - min_) / 20.);
+    if(random(2)){
+        noise = -noise;
+    }
     float cp;
     if (err_ == 0) {
         cp = p;
