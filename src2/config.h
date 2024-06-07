@@ -39,7 +39,6 @@ void io_init() {
         gpio_set_dir(motor_pins[i], GPIO_OUT);
         gpio_set_function(motor_pins[i], GPIO_FUNC_PWM);
         uint slice_num = pwm_gpio_to_slice_num(motor_pins[i]);
-        // pwm_set_clkdiv(slice_num, 25);
         pwm_set_clkdiv(slice_num, 133000000. / 20000.);
         pwm_set_wrap(slice_num, 255);
         pwm_set_enabled(slice_num, true);
