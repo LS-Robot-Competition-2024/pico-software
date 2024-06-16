@@ -1,5 +1,6 @@
 #include <EEPROM.h>
 #include <SerialBT.h>
+
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 
@@ -20,10 +21,10 @@
 #define ANALOG_SEED_PIN 27
 
 #define MAIN_ADDRESS 0
-#define TUNING_ADDRESS_1 40
-#define TUNING_ADDRESS_2 80
-#define SPEED_ADDRESS 120
-#define TIME_ADDRESS 124
+#define TUNING_ADDRESS_1 44
+#define TUNING_ADDRESS_2 88
+#define SPEED_ADDRESS 132
+#define TIME_ADDRESS 136
 
 const unsigned long delay_time = 1;
 const int motor_pins[] = {MOTOR_PIN_0, MOTOR_PIN_1, MOTOR_PIN_2, MOTOR_PIN_3};  // lf lb rf rb
@@ -39,8 +40,8 @@ float prev_err;
 int non_line_period;
 unsigned long start;
 
-float kp, ki, kd, kr, score;
-float pt, it, dt;
+float kp, ki, kd, kr, kvp, score;
+float pt, it, dt, itr_score;
 float position_weights[5];
 float senser_weights[8];
 
@@ -49,18 +50,17 @@ float score_weights[] = {1, 2, 3, 4, 4, 3, 2, 1};
 float line_positions[256];
 
 int last_edge;
-float param_range[9][2] = {{20., 100.}, {0., 3.},   {0., 50.},  {0, 0.96},  {0.08, 0.4},
-                           {0.2, 0.9},  {0.4, 1.4}, {0.6, 1.7}, {0.76, 2.2}};
-// p i d r pos1 pos2 pos3 pod4 pos5
+float param_range[10][2] = {{20., 100.}, {0., 3.},   {0., 50.},  {0, 0.96},  {0., 20.},
+                            {0.08, 0.4}, {0.2, 0.9}, {0.4, 1.4}, {0.6, 1.7}, {0.76, 2.2}};
+// p i d r v pos1 pos2 pos3 pod4 pos5
+// 65.79, 0.40, 1.86, 0.34, 0.0, 0.10, 0.66, 0.84, 1.07, 1.29
 void setup() {
     io_init();
     setup_BT();
     randomSeed(generate_seed());
     EEPROM.begin(512);
 }
-void loop() {
-    choose_mode();
-}
+void loop() { choose_mode(); }
 
 void io_init() {
     for (int i = 0; i < 8; i++) {
@@ -173,7 +173,7 @@ void print_test_mode() {
 void init_val() {
     err = prev_err = non_line_period = 0;
     start = millis();
-    pt = it = dt = 0;
+    pt = it = dt = itr_score = 0;
     score = 0;
     last_edge = 0;
 }
@@ -181,8 +181,8 @@ void run_line_trace() {
     limit_time = get_int(TIME_ADDRESS);
     k_speed = get_int(SPEED_ADDRESS);
 
-    read_params(kp, ki, kd, kr, position_weights, score, MAIN_ADDRESS);
-    print_params(kp, ki, kd, kr, position_weights, score);
+    read_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
+    print_params(kp, ki, kd, kr, kvp, position_weights, score);
 
     precompute_positions();
     precompute_score();
@@ -193,10 +193,11 @@ void run_line_trace() {
             pid_control();
             if ((millis() - start >= limit_time) || (non_line_period > (2000. / delay_time))) {
                 run = false;
-                score = score / 1000 * k_speed;
+                break_motors(100);
+                score = score / 1000.;
                 SerialBT.printf("time: %.1f\n", (millis() - start) / 1000);
-                write_params(kp, ki, kd, kr, position_weights, score, MAIN_ADDRESS);
-                print_params(kp, ki, kd, kr, position_weights, score);
+                write_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
+                print_params(kp, ki, kd, kr, kvp, position_weights, score);
             }
         } else {
             move_motors(0, 0);
@@ -208,39 +209,40 @@ void tune_line_trace() {
     limit_time = get_int(TIME_ADDRESS);
     k_speed = get_int(SPEED_ADDRESS);
 
-    read_params(kp, ki, kd, kr, position_weights, score, TUNING_ADDRESS_1);
-    float kp2, ki2, kd2, kr2, score2, weights2[5];
-    read_params(kp2, ki2, kd2, kr2, weights2, score2, TUNING_ADDRESS_2);
-    float best_kp, best_ki, best_kd, best_kr, best_score, best_weights[5];
-    read_params(best_kp, best_ki, best_kd, best_kr, best_weights, best_score, MAIN_ADDRESS);
+    read_params(kp, ki, kd, kr, kvp, position_weights, score, TUNING_ADDRESS_1);
+    float kp2, ki2, kd2, kr2, kvp2, score2, weights2[5];
+    read_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2, TUNING_ADDRESS_2);
+    float best_kp, best_ki, best_kd, best_kr, best_kvp, best_score, best_weights[5];
+    read_params(best_kp, best_ki, best_kd, best_kr, best_kvp, best_weights, best_score, MAIN_ADDRESS);
 
     float score_diff = score - score2;
     update_param(kp, kp2, score_diff, param_range[0]);
     update_param(ki, ki2, score_diff, param_range[1]);
     update_param(kd, kd2, score_diff, param_range[2]);
     update_param(kr, kr2, score_diff, param_range[3]);
-    update_param(position_weights[0], weights2[0], score_diff, param_range[4]);
+    update_param(kvp, kvp2, score_diff, param_range[4]);
+    update_param(position_weights[0], weights2[0], score_diff, param_range[5]);
 
     float tmp;
-    tmp = param_range[5][0];
-    param_range[5][0] = max(param_range[5][0], position_weights[0] + 0.1);
-    update_param(position_weights[1], weights2[1], score_diff, param_range[5]);
-    param_range[5][0] = tmp;
-
     tmp = param_range[6][0];
-    param_range[6][0] = max(param_range[6][0], position_weights[1] + 0.1);
-    update_param(position_weights[2], weights2[2], score_diff, param_range[6]);
+    param_range[6][0] = max(param_range[6][0], position_weights[0] + 0.1);
+    update_param(position_weights[1], weights2[1], score_diff, param_range[6]);
     param_range[6][0] = tmp;
 
     tmp = param_range[7][0];
-    param_range[7][0] = max(param_range[7][0], position_weights[2] + 0.1);
-    update_param(position_weights[3], weights2[3], score_diff, param_range[7]);
+    param_range[7][0] = max(param_range[7][0], position_weights[1] + 0.1);
+    update_param(position_weights[2], weights2[2], score_diff, param_range[7]);
     param_range[7][0] = tmp;
 
     tmp = param_range[8][0];
-    param_range[8][0] = max(param_range[8][0], position_weights[3] + 0.1);
-    update_param(position_weights[4], weights2[4], score_diff, param_range[8]);
+    param_range[8][0] = max(param_range[8][0], position_weights[2] + 0.1);
+    update_param(position_weights[3], weights2[3], score_diff, param_range[8]);
     param_range[8][0] = tmp;
+
+    tmp = param_range[9][0];
+    param_range[9][0] = max(param_range[9][0], position_weights[3] + 0.1);
+    update_param(position_weights[4], weights2[4], score_diff, param_range[9]);
+    param_range[9][0] = tmp;
 
     score2 = score;
 
@@ -253,16 +255,17 @@ void tune_line_trace() {
             pid_control();
             if ((millis() - start >= limit_time) || (non_line_period > (2000. / delay_time))) {
                 run = false;
-                score = score / 1000 * k_speed;
-                write_params(kp, ki, kd, kr, position_weights, score, TUNING_ADDRESS_1);
+                break_motors(100);
+                score = score / 1000;
+                write_params(kp, ki, kd, kr, kvp, position_weights, score, TUNING_ADDRESS_1);
                 SerialBT.println("current");
-                print_params(kp, ki, kd, kr, position_weights, score);
-                write_params(kp2, ki2, kd2, kr2, weights2, score2, TUNING_ADDRESS_2);
+                print_params(kp, ki, kd, kr, kvp, position_weights, score);
+                write_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2, TUNING_ADDRESS_2);
                 SerialBT.println("previous");
-                print_params(kp2, ki2, kd2, kr2, weights2, score2);
+                print_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2);
                 if (best_score < score) {
                     SerialBT.println("update!!");
-                    write_params(kp, ki, kd, kr, position_weights, score, MAIN_ADDRESS);
+                    write_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
                 }
             }
         } else {
@@ -271,23 +274,25 @@ void tune_line_trace() {
         }
     }
 }
-void read_params(float& kp_, float& ki_, float& kd_, float& kr_, float (&weight_)[5], float& score_, int offset) {
+void read_params(float &kp_, float &ki_, float &kd_, float &kr_, float &kvp_, float (&weight_)[5], float &score_, int offset) {
     kp_ = get_float(offset);
     ki_ = get_float(offset + 4 * 1);
     kd_ = get_float(offset + 4 * 2);
     kr_ = get_float(offset + 4 * 3);
-    weight_[0] = get_float(offset + 4 * 4);
-    weight_[1] = get_float(offset + 4 * 5);
-    weight_[2] = get_float(offset + 4 * 6);
-    weight_[3] = get_float(offset + 4 * 7);
-    weight_[4] = get_float(offset + 4 * 8);
-    score_ = get_float(offset + 4 * 9);
+    kvp_ = get_float(offset + 4 * 4);
+    weight_[0] = get_float(offset + 4 * 5);
+    weight_[1] = get_float(offset + 4 * 6);
+    weight_[2] = get_float(offset + 4 * 7);
+    weight_[3] = get_float(offset + 4 * 8);
+    weight_[4] = get_float(offset + 4 * 9);
+    score_ = get_float(offset + 4 * 10);
 }
-void print_params(float kp_, float ki_, float kd_, float kr_, float (&weight_)[5], float score_) {
+void print_params(float kp_, float ki_, float kd_, float kr_, float kvp_, float (&weight_)[5], float score_) {
     SerialBT.printf("kp: %.2f\n", kp_);
     SerialBT.printf("ki: %.2f\n", ki_);
     SerialBT.printf("kd: %.2f\n", kd_);
     SerialBT.printf("kr: %.2f\n", kr_);
+    SerialBT.printf("kvp: %.2f\n", kvp_);
     SerialBT.printf("pos1: %.2f\n", weight_[0]);
     SerialBT.printf("pos2: %.2f\n", weight_[1]);
     SerialBT.printf("pos3: %.2f\n", weight_[2]);
@@ -295,17 +300,18 @@ void print_params(float kp_, float ki_, float kd_, float kr_, float (&weight_)[5
     SerialBT.printf("pos5: %.2f\n", weight_[4]);
     SerialBT.printf("score: %.2f\n", score_);
 }
-void write_params(float kp_, float ki_, float kd_, float kr_, float (&weight_)[5], float score_, int offset) {
+void write_params(float kp_, float ki_, float kd_, float kr_, float kvp_, float (&weight_)[5], float score_, int offset) {
     put_float(offset, kp_);
     put_float(offset + 4 * 1, ki_);
     put_float(offset + 4 * 2, kd_);
     put_float(offset + 4 * 3, kr_);
-    put_float(offset + 4 * 4, weight_[0]);
-    put_float(offset + 4 * 5, weight_[1]);
-    put_float(offset + 4 * 6, weight_[2]);
-    put_float(offset + 4 * 7, weight_[3]);
-    put_float(offset + 4 * 8, weight_[4]);
-    put_float(offset + 4 * 9, score_);
+    put_float(offset + 4 * 4, kvp_);
+    put_float(offset + 4 * 5, weight_[0]);
+    put_float(offset + 4 * 6, weight_[1]);
+    put_float(offset + 4 * 7, weight_[2]);
+    put_float(offset + 4 * 8, weight_[3]);
+    put_float(offset + 4 * 9, weight_[4]);
+    put_float(offset + 4 * 10, score_);
 }
 float get_float(int addr) {
     union {
@@ -357,9 +363,11 @@ void pid_control() {
     it = it * kr + err;
     dt = err - prev_err;
 
-    int speed = pt * kp + it * ki + dt * kd;
+    int curve = pt * kp + it * ki + dt * kd;
+    int straight = constrain16(k_speed - kvp * err, 0., k_speed);
+    score += itr_score * straight;
 
-    move_motors(k_speed + speed, k_speed - speed);
+    move_motors(straight + curve, straight - curve);
     prev_err = err;
 }
 void move_motors(int l_speed, int r_speed) {
@@ -381,6 +389,13 @@ void move_motors(int l_speed, int r_speed) {
         pwm_set_gpio_level(MOTOR_PIN_3, -r_speed);
     }
 }
+void break_motors(int power) {
+    power = constrain16(power, 0, 255);
+    pwm_set_gpio_level(MOTOR_PIN_0, power);
+    pwm_set_gpio_level(MOTOR_PIN_1, power);
+    pwm_set_gpio_level(MOTOR_PIN_2, power);
+    pwm_set_gpio_level(MOTOR_PIN_3, power);
+}
 float read_senser() {
     int x = 0;
     for (int i = 0; i < 8; i++) {
@@ -388,6 +403,15 @@ float read_senser() {
             x |= (1 << (7 - i));
         }
     }
+
+    if (score_patterns[x]) {
+        itr_score = score_patterns[x];
+        non_line_period = 0;
+    } else {
+        itr_score = 0;
+        non_line_period++;
+    }
+
     if (x) {
         if ((x & 0x1) && !(x & 0x80)) {
             last_edge = 1;
@@ -400,12 +424,6 @@ float read_senser() {
         } else if (last_edge < 0) {
             return -position_weights[4];
         }
-    }
-    if (score_patterns[x]) {
-        score += score_patterns[x];
-        non_line_period = 0;
-    } else {
-        non_line_period++;
     }
     return line_positions[x];
 }
@@ -478,7 +496,7 @@ float constrain16(float x, float low, float high) {
         return x;
     }
 }
-void update_param(float& p, float& pre_p, float err_, float range_[2]) {
+void update_param(float &p, float &pre_p, float err_, float range_[2]) {
     float noise = uniform_random(range_[1] - range_[0]) / 30.;
     if (random(2)) {
         noise = -noise;
@@ -500,21 +518,22 @@ float uniform_random(float x) {
     return ret;
 }
 void set_main_params() {
-    read_params(kp, ki, kd, kr, position_weights, score, MAIN_ADDRESS);
-    print_params(kp, ki, kd, kr, position_weights, score);
+    read_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
+    print_params(kp, ki, kd, kr, kvp, position_weights, score);
 
-    String param_name[] = {"kp", "ki", "kd", "kr", "pos1", "pos2", "pos3", "pos4", "pos5"};
+    String param_name[] = {"kp", "ki", "kd", "kr", "kvp", "pos1", "pos2", "pos3", "pos4", "pos5"};
     float param_val[] = {kp,
                          ki,
                          kd,
                          kr,
+                         kvp,
                          position_weights[0],
                          position_weights[1],
                          position_weights[2],
                          position_weights[3],
                          position_weights[4]};
 
-    for (int i = 0; i < 9; i++) {
+    for (int i = 0; i < 10; i++) {
         SerialBT.println(param_name[i] + "?");
         while (1) {
             if (SerialBT.available()) {
@@ -528,39 +547,39 @@ void set_main_params() {
             }
         }
     }
-    float weight[] = {param_val[4], param_val[5], param_val[6], param_val[7], param_val[8]};
-    write_params(param_val[0], param_val[1], param_val[2], param_val[3], weight, 0., MAIN_ADDRESS);
-    print_params(param_val[0], param_val[1], param_val[2], param_val[3], weight, 0.);
+    float weight[] = {param_val[5], param_val[6], param_val[7], param_val[8], param_val[9]};
+    write_params(param_val[0], param_val[1], param_val[2], param_val[3], param_val[4], weight, 0., MAIN_ADDRESS);
+    print_params(param_val[0], param_val[1], param_val[2], param_val[3], param_val[4], weight, 0.);
 }
 void init_tune_params() {
     SerialBT.println("read");
     SerialBT.println("main");
-    read_params(kp, ki, kd, kr, position_weights, score, MAIN_ADDRESS);
-    print_params(kp, ki, kd, kr, position_weights, score);
+    read_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
+    print_params(kp, ki, kd, kr, kvp, position_weights, score);
 
-    float kp2, ki2, kd2, kr2, score2, weights2[5];
+    float kp2, ki2, kd2, kr2, kvp2, score2, weights2[5];
     SerialBT.println("tuning1");
-    read_params(kp2, ki2, kd2, kr2, weights2, score2, TUNING_ADDRESS_1);
-    print_params(kp2, ki2, kd2, kr2, weights2, score2);
+    read_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2, TUNING_ADDRESS_1);
+    print_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2);
 
     SerialBT.println("tuning2");
-    read_params(kp2, ki2, kd2, kr2, weights2, score2, TUNING_ADDRESS_2);
-    print_params(kp2, ki2, kd2, kr2, weights2, score2);
+    read_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2, TUNING_ADDRESS_2);
+    print_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2);
 
     SerialBT.println("write");
-    write_params(kp, ki, kd, kr, position_weights, score, TUNING_ADDRESS_1);
-    write_params(kp, ki, kd, kr, position_weights, score, TUNING_ADDRESS_2);
+    write_params(kp, ki, kd, kr, kvp, position_weights, score, TUNING_ADDRESS_1);
+    write_params(kp, ki, kd, kr, kvp, position_weights, score, TUNING_ADDRESS_2);
 }
 void print_all_params() {
     SerialBT.println("main");
-    read_params(kp, ki, kd, kr, position_weights, score, MAIN_ADDRESS);
-    print_params(kp, ki, kd, kr, position_weights, score);
+    read_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
+    print_params(kp, ki, kd, kr, kvp, position_weights, score);
     SerialBT.println("tuning1");
-    read_params(kp, ki, kd, kr, position_weights, score, TUNING_ADDRESS_1);
-    print_params(kp, ki, kd, kr, position_weights, score);
+    read_params(kp, ki, kd, kr, kvp, position_weights, score, TUNING_ADDRESS_1);
+    print_params(kp, ki, kd, kr, kvp, position_weights, score);
     SerialBT.println("tuning2");
-    read_params(kp, ki, kd, kr, position_weights, score, TUNING_ADDRESS_2);
-    print_params(kp, ki, kd, kr, position_weights, score);
+    read_params(kp, ki, kd, kr, kvp, position_weights, score, TUNING_ADDRESS_2);
+    print_params(kp, ki, kd, kr, kvp, position_weights, score);
 }
 void check_line_senser() {
     SerialBT.println("stop:s");
