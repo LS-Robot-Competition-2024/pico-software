@@ -405,11 +405,10 @@ float read_senser() {
     }
 
     itr_score = score_patterns[x];
-    if (score_patterns[x] != 7.2) {
-        non_line_period = 0;
-    } else {
-        itr_score = 0;
+    if (itr_score == 7.2) {
         non_line_period++;
+    } else {
+        non_line_period = 0;
     }
 
     if (x) {
