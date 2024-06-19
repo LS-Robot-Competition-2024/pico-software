@@ -46,7 +46,7 @@ float position_weights[5];
 float senser_weights[8];
 
 float score_patterns[256];
-float score_weights[] = {1, 2, 3, 4, 4, 3, 2, 1};
+float score_weights[] = {-5.6, -4., -2.4, -0.8, 0.8, 2.4, 4., 5.6};
 float line_positions[256];
 
 int last_edge;
@@ -263,7 +263,7 @@ void tune_line_trace() {
                 write_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2, TUNING_ADDRESS_2);
                 SerialBT.println("previous");
                 print_params(kp2, ki2, kd2, kr2, kvp2, weights2, score2);
-                if (best_score < score) {
+                if (score < best_score) {
                     SerialBT.println("update!!");
                     write_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
                 }
@@ -364,8 +364,8 @@ void pid_control() {
     dt = err - prev_err;
 
     int curve = pt * kp + it * ki + dt * kd;
-    int straight = constrain16(k_speed - kvp * err, 0., k_speed);
-    score += itr_score * straight;
+    int straight = constrain16(k_speed - kvp * abs(err), 0., k_speed);
+    score += itr_score * kvp * abs(err);
 
     move_motors(straight + curve, straight - curve);
     prev_err = err;
@@ -404,8 +404,8 @@ float read_senser() {
         }
     }
 
-    if (score_patterns[x]) {
-        itr_score = score_patterns[x];
+    itr_score = score_patterns[x];
+    if (score_patterns[x] != 7.2) {
         non_line_period = 0;
     } else {
         itr_score = 0;
@@ -502,9 +502,9 @@ void update_param(float &p, float &pre_p, float err_, float range_[2]) {
         noise = -noise;
     }
     float cp;
-    if (err_ == 0) {
+    if (err_ == 0.) {
         cp = p;
-    } else if (err_ * (p - pre_p) >= 0) {
+    } else if (err_ * (p - pre_p) < 0.) {
         cp = p + abs((p - pre_p) / 2.);
     } else {
         cp = p - abs((p - pre_p) / 2.);
@@ -639,6 +639,7 @@ void precompute_score() {
     for (int i = 0; i < 256; i++) {
         float sum = 0;
         int size = 0;
+        score_patterns[i] = 7.2;
         for (int j = 0; j < 8; j++) {
             if (i & (1 << (7 - j))) {
                 sum += score_weights[j];
@@ -646,7 +647,7 @@ void precompute_score() {
             }
         }
         if (size == 1 || size == 2) {
-            score_patterns[i] = sum / size;
+            score_patterns[i] = abs(sum / size);
         }
     }
 }
