@@ -195,7 +195,8 @@ void run_line_trace() {
                 run = false;
                 break_motors(100);
                 score = score / 1000.;
-                SerialBT.printf("time: %.1f\n", (millis() - start) / 1000);
+                SerialBT.printf("time: %.1f\n", (double)(millis() - start) / 1000);
+                SerialBT.printf("non_line_period %f\n",non_line_period);
                 write_params(kp, ki, kd, kr, kvp, position_weights, score, MAIN_ADDRESS);
                 print_params(kp, ki, kd, kr, kvp, position_weights, score);
             }
@@ -408,7 +409,7 @@ float read_senser() {
     }
 
     itr_score = score_patterns[x];
-    if (itr_score == 7.2) {
+    if (itr_score > 7.) {
         non_line_period++;
     } else {
         non_line_period = 0;
