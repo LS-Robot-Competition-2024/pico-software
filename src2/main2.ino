@@ -356,7 +356,10 @@ void put_int(int addr, int val) {
     EEPROM.commit();
 }
 void pid_control() {
-    delay(delay_time);
+    unsigned long delay_start = millis();
+    while ((millis() - delay_start) < delay_time) {
+        ;
+    }
 
     err = read_senser();
     pt = err;
@@ -365,7 +368,7 @@ void pid_control() {
 
     int curve = pt * kp + it * ki + dt * kd;
     int straight = constrain16(k_speed - kvp * abs(err), 0., k_speed);
-    score += itr_score * kvp * abs(err);
+    score += itr_score * (1 + kvp * abs(err));
 
     move_motors(straight + curve, straight - curve);
     prev_err = err;
@@ -627,7 +630,7 @@ void set_limit_time() {
             if (is_number(tmp)) {
                 limit_time = tmp.toInt();
             }
-            limit_time = constrain16(limit_time, 10 * 1000, 60 * 1000);
+            limit_time = constrain16(limit_time, 5 * 1000, 60 * 1000);
             put_int(TIME_ADDRESS, limit_time);
             break;
         }
